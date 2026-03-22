@@ -32,6 +32,7 @@ Den Master Key findest du je nach Setup:
 ```bash
 python litellm_report.py [--keys] [--teams] [--tags] [--daily] [--all]
                          [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+                         [--markdown] [--output DATEI]
 ```
 
 ### Optionen
@@ -45,6 +46,8 @@ python litellm_report.py [--keys] [--teams] [--tags] [--daily] [--all]
 | `--all` | Alle vier Reports auf einmal |
 | `--start` | Startdatum (default: 30 Tage zurück) |
 | `--end` | Enddatum (default: heute) |
+| `--markdown` | Ausgabe als Markdown-Tabellen |
+| `--output` / `-o` | Ausgabe in Datei schreiben (`.md` → automatisch Markdown) |
 
 ### Beispiele
 
@@ -60,6 +63,9 @@ python litellm_report.py --tags --start 2026-03-01 --end 2026-03-31
 
 # Tagesdetails für eine bestimmte Woche
 python litellm_report.py --daily --start 2026-03-10 --end 2026-03-16
+
+# Report als Markdown-Datei exportieren
+python litellm_report.py --all -o report.md
 ```
 
 ## Ausgabe
