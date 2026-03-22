@@ -20,6 +20,7 @@ except ImportError:
 # ── Konfiguration ──────────────────────────────────────────────────────────────
 PROXY_URL = os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")
 MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+TABLE_FMT = "rounded_outline"
 
 
 def headers():
@@ -66,7 +67,7 @@ def report_keys():
     rows.sort(key=lambda x: float(x[3].replace("$", "")), reverse=True)
 
     print("\n📊 Spend pro Virtual Key")
-    print(tabulate(rows, headers=["Key / Alias", "Team", "User", "Kosten (USD)", "Modelle"], tablefmt="rounded_outline"))
+    print(tabulate(rows, headers=["Key / Alias", "Team", "User", "Kosten (USD)", "Modelle"], tablefmt=TABLE_FMT))
 
 
 def report_tags(start_date, end_date):
@@ -95,7 +96,7 @@ def report_tags(start_date, end_date):
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
     print(f"\n🏷️  Spend pro Tag/Projekt ({start_date} → {end_date})")
-    print(tabulate(rows, headers=["Tag", "Kosten (USD)", "Requests"], tablefmt="rounded_outline"))
+    print(tabulate(rows, headers=["Tag", "Kosten (USD)", "Requests"], tablefmt=TABLE_FMT))
 
 
 def report_global(start_date, end_date):
@@ -120,7 +121,7 @@ def report_global(start_date, end_date):
         ])
 
     print(f"\n📅 Täglicher Spend ({start_date} → {end_date})")
-    print(tabulate(rows, headers=["Datum", "Kosten (USD)", "Tokens"], tablefmt="rounded_outline"))
+    print(tabulate(rows, headers=["Datum", "Kosten (USD)", "Tokens"], tablefmt=TABLE_FMT))
     print(f"\n   Gesamt: ${total:.4f} USD")
 
 
@@ -150,7 +151,7 @@ def report_teams():
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
     print("\n👥 Spend pro Team")
-    print(tabulate(rows, headers=["Team", "Kosten (USD)", "Budget (USD)"], tablefmt="rounded_outline"))
+    print(tabulate(rows, headers=["Team", "Kosten (USD)", "Budget (USD)"], tablefmt=TABLE_FMT))
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -174,6 +175,8 @@ Beispiele:
     parser.add_argument("--tags",   action="store_true", help="Spend pro Tag/Projekt")
     parser.add_argument("--daily",  action="store_true", help="Täglicher Spend")
     parser.add_argument("--all",    action="store_true", help="Alle Reports")
+    parser.add_argument("--markdown", action="store_true", help="Ausgabe als Markdown")
+    parser.add_argument("--output", "-o", metavar="DATEI", help="Ausgabe in Datei schreiben")
     parser.add_argument("--start",  default=(datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
                         help="Startdatum (default: -30 Tage)")
     parser.add_argument("--end",    default=datetime.now().strftime("%Y-%m-%d"),
@@ -181,13 +184,25 @@ Beispiele:
 
     args = parser.parse_args()
 
+    global TABLE_FMT
+    if args.markdown or (args.output and args.output.endswith(".md")):
+        TABLE_FMT = "github"
+
+    if args.output:
+        sys.stdout = open(args.output, "w", encoding="utf-8")
+
     if not MASTER_KEY:
         print("❌ LITELLM_MASTER_KEY nicht gesetzt.")
         print("   export LITELLM_MASTER_KEY=sk-...")
         sys.exit(1)
 
-    print(f"🔌 Proxy: {PROXY_URL}")
-    print(f"📆 Zeitraum: {args.start} → {args.end}")
+    if TABLE_FMT == "github":
+        print(f"# LiteLLM Spend Report\n")
+        print(f"- **Proxy:** {PROXY_URL}")
+        print(f"- **Zeitraum:** {args.start} → {args.end}")
+    else:
+        print(f"🔌 Proxy: {PROXY_URL}")
+        print(f"📆 Zeitraum: {args.start} → {args.end}")
 
     if args.all or args.keys:
         report_keys()
