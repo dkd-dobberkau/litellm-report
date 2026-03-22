@@ -5,10 +5,12 @@ Kommandozeilen-Script zum Abrufen und Anzeigen von Kostendaten aus dem LiteLLM P
 ## Voraussetzungen
 
 - Python 3.8+
+- [uv](https://docs.astral.sh/uv/) (empfohlen) oder pip
 - Zugang zum LiteLLM Proxy (URL + Master Key)
 
 ```bash
-pip install requests tabulate
+uv venv && source .venv/bin/activate
+uv pip install requests tabulate
 ```
 
 ## Konfiguration
