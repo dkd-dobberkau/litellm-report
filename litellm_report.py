@@ -66,7 +66,10 @@ def report_keys():
 
     rows.sort(key=lambda x: float(x[3].replace("$", "")), reverse=True)
 
-    print("\n📊 Spend pro Virtual Key")
+    if TABLE_FMT == "github":
+        print("\n## 📊 Spend pro Virtual Key\n")
+    else:
+        print("\n📊 Spend pro Virtual Key")
     print(tabulate(rows, headers=["Key / Alias", "Team", "User", "Kosten (USD)", "Modelle"], tablefmt=TABLE_FMT))
 
 
@@ -95,7 +98,10 @@ def report_tags(start_date, end_date):
 
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
-    print(f"\n🏷️  Spend pro Tag/Projekt ({start_date} → {end_date})")
+    if TABLE_FMT == "github":
+        print(f"\n## 🏷️  Spend pro Tag/Projekt ({start_date} → {end_date})\n")
+    else:
+        print(f"\n🏷️  Spend pro Tag/Projekt ({start_date} → {end_date})")
     print(tabulate(rows, headers=["Tag", "Kosten (USD)", "Requests"], tablefmt=TABLE_FMT))
 
 
@@ -120,7 +126,10 @@ def report_global(start_date, end_date):
             item.get("total_tokens", "—"),
         ])
 
-    print(f"\n📅 Täglicher Spend ({start_date} → {end_date})")
+    if TABLE_FMT == "github":
+        print(f"\n## 📅 Täglicher Spend ({start_date} → {end_date})\n")
+    else:
+        print(f"\n📅 Täglicher Spend ({start_date} → {end_date})")
     print(tabulate(rows, headers=["Datum", "Kosten (USD)", "Tokens"], tablefmt=TABLE_FMT))
     print(f"\n   Gesamt: ${total:.4f} USD")
 
@@ -150,7 +159,10 @@ def report_teams():
 
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
-    print("\n👥 Spend pro Team")
+    if TABLE_FMT == "github":
+        print("\n## 👥 Spend pro Team\n")
+    else:
+        print("\n👥 Spend pro Team")
     print(tabulate(rows, headers=["Team", "Kosten (USD)", "Budget (USD)"], tablefmt=TABLE_FMT))
 
 
