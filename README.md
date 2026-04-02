@@ -1,6 +1,6 @@
-# LiteLLM Spend Report
+# LiteLLM Spend Report & Budget-Management
 
-Kommandozeilen-Script zum Abrufen und Anzeigen von Kostendaten aus dem LiteLLM Proxy — aufgeschlüsselt nach Virtual Keys, Teams, Projekten (Tags) und Tagen.
+Kommandozeilen-Tools zum Abrufen von Kostendaten, Verwalten von Budgets und Monitoring der Budget-Auslastung für den LiteLLM Proxy.
 
 ## Voraussetzungen
 
@@ -10,86 +10,118 @@ Kommandozeilen-Script zum Abrufen und Anzeigen von Kostendaten aus dem LiteLLM P
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install requests tabulate
+uv pip install requests tabulate python-dotenv
 ```
 
 ## Konfiguration
 
-Zwei Umgebungsvariablen müssen gesetzt sein:
+Umgebungsvariablen in `.env` oder als Export:
 
 ```bash
-export LITELLM_PROXY_URL=https://dein-proxy-host   # default: http://localhost:4000
-export LITELLM_MASTER_KEY=sk-...
+LITELLM_PROXY_URL=https://dein-proxy-host   # default: http://localhost:4000
+LITELLM_MASTER_KEY=sk-...
+
+# Optional für Budget-Alerts per E-Mail
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=litellm@example.com
+SMTP_PASSWORD=...
+SMTP_FROM=litellm@example.com
 ```
 
-Den Master Key findest du je nach Setup:
-- in der `.env`-Datei des Proxys (`LITELLM_MASTER_KEY=...`)
-- im `config.yaml` unter `general_settings.master_key`
-- oder per `docker inspect <container> | grep LITELLM_MASTER_KEY`
+## Scripts
 
-## Verwendung
+### litellm_report.py — Spend-Reports
 
 ```bash
-python litellm_report.py [--keys] [--teams] [--tags] [--daily] [--all]
+python litellm_report.py [--keys] [--users] [--teams] [--tags] [--daily] [--all]
                          [--start YYYY-MM-DD] [--end YYYY-MM-DD]
                          [--markdown] [--output DATEI]
 ```
 
-### Optionen
-
 | Flag | Beschreibung |
 |---|---|
 | `--keys` | Spend pro Virtual Key |
+| `--users` | Heavy-User-Analyse (Spend pro User aggregiert) |
 | `--teams` | Spend pro Team |
 | `--tags` | Spend pro Tag / Projekt |
 | `--daily` | Täglicher Spend im Zeitraum |
-| `--all` | Alle vier Reports auf einmal |
+| `--all` | Alle Reports auf einmal |
 | `--start` | Startdatum (default: 30 Tage zurück) |
 | `--end` | Enddatum (default: heute) |
 | `--markdown` | Ausgabe als Markdown-Tabellen |
 | `--output` / `-o` | Ausgabe in Datei schreiben (`.md` → automatisch Markdown) |
 
-### Beispiele
-
 ```bash
-# Alle Reports, letzten 30 Tage
 python litellm_report.py --all
-
-# Nur Keys und Teams
-python litellm_report.py --keys --teams
-
-# Tag-Auswertung für März 2026
+python litellm_report.py --users
 python litellm_report.py --tags --start 2026-03-01 --end 2026-03-31
-
-# Tagesdetails für eine bestimmte Woche
-python litellm_report.py --daily --start 2026-03-10 --end 2026-03-16
-
-# Report als Markdown-Datei exportieren
 python litellm_report.py --all -o report.md
 ```
 
-## Ausgabe
+### litellm_budget.py — Budget-Konfiguration
 
+Erstellt oder aktualisiert Keys/Teams mit Budget-Limits und modellspezifischen Budgets.
+
+```bash
+python litellm_budget.py info              # Budget-Konfiguration anzeigen
+python litellm_budget.py key-neu           # Neuen Key mit Budget erstellen
+python litellm_budget.py key-update sk-... # Bestehenden Key aktualisieren
+python litellm_budget.py team-neu "Name"   # Neues Team mit Budget erstellen
 ```
-🔌 Proxy: https://dein-proxy-host
-📆 Zeitraum: 2026-03-01 → 2026-03-31
 
-📊 Spend pro Virtual Key
-╭──────────────────┬──────────────────┬──────────────╮
-│ Key / Alias      │ Team             │ Kosten (USD) │
-├──────────────────┼──────────────────┼──────────────┤
-│ dev-team-key     │ team-development │ $1.234,56    │
-│ consulting-key   │ team-consulting  │ $456,78      │
-╰──────────────────┴──────────────────┴──────────────╯
+Budget-Einstellungen werden direkt im Script konfiguriert (`GESAMT_BUDGET`, `MODELL_BUDGETS`).
 
-👥 Spend pro Team
-╭──────────────────┬──────────────────┬───────────────╮
-│ Team             │ Kosten (USD)     │ Budget (USD)  │
-├──────────────────┼──────────────────┼───────────────┤
-│ team-development │ $1.234,56        │ $1.500,00     │
-│ team-consulting  │ $456,78          │ —             │
-╰──────────────────┴──────────────────┴───────────────╯
+### litellm_assign_users.py — User-Zuordnung
+
+Weist bestehenden Virtual Keys eine `user_id` (E-Mail-Adresse) zu, basierend auf dem Key-Alias.
+
+```bash
+python litellm_assign_users.py           # Preview (keine Änderungen)
+python litellm_assign_users.py --apply   # Zuordnung durchführen
 ```
+
+Die Zuordnung wird über `USER_MAP` im Script konfiguriert (key_alias → E-Mail).
+
+### litellm_budget_alert.py — Budget-Monitoring
+
+Prüft die Budget-Auslastung pro Kalendermonat und sendet E-Mail-Warnungen bei Schwellenwerten (80%, 90%, 100%).
+
+```bash
+python litellm_budget_alert.py --dry-run              # Preview, keine E-Mails
+python litellm_budget_alert.py                         # Alerts senden
+python litellm_budget_alert.py --month 2026-03         # Bestimmten Monat prüfen
+python litellm_budget_alert.py --threshold 80          # Nur ab 80% anzeigen
+```
+
+Monatsbudgets werden über `MONTHLY_BUDGETS` im Script konfiguriert.
+
+### litellm_reset_spend.py — Spend-Reset
+
+Setzt den Spend aller Keys mit Budget auf $0 zurück. Gedacht für einen monatlichen Cronjob.
+
+```bash
+python litellm_reset_spend.py            # Alle Keys zurücksetzen
+```
+
+### Cronjobs (optional)
+
+```cron
+# Budget-Alert täglich um 8:00
+0 8 * * * cd /path/to/litellm-report && python litellm_budget_alert.py
+
+# Spend-Reset am 1. jeden Monats um 00:05
+5 0 1 * * cd /path/to/litellm-report && python litellm_reset_spend.py
+```
+
+## Budget-Stufen
+
+| Stufe | Budget/Monat | Beschreibung |
+|-------|-------------|--------------|
+| Power-User | $500 | Keys mit hohem Verbrauch |
+| Regular | $200 | Regelmäßige Nutzer |
+| Light | $50 | Gelegentliche Nutzer |
+| Service | $50–300 | Geteilte Keys (Chat, Qodo, etc.) |
 
 ## Fehlermeldungen
 
