@@ -56,12 +56,13 @@ def report_keys():
 
     rows = []
     for item in data:
+        info = key_info(item.get("api_key", ""))
         rows.append([
             item.get("key_alias") or item.get("api_key", "")[:12] + "...",
-            item.get("team_id", "—"),
-            item.get("user_id", "—"),
+            info.get("team_id", "—"),
+            info.get("user_id", "—"),
             f"${item.get('total_spend', item.get('total_cost', 0)):.4f}",
-            item.get("models", []),
+            info.get("models", []),
         ])
 
     rows.sort(key=lambda x: float(x[3].replace("$", "")), reverse=True)
@@ -134,6 +135,65 @@ def report_global(start_date, end_date):
     print(f"\n   Gesamt: ${total:.4f} USD")
 
 
+def key_info(api_key_hash):
+    """Holt Details zu einem Key über /key/info."""
+    url = f"{PROXY_URL}/key/info"
+    try:
+        r = requests.get(url, headers=headers(), params={"key": api_key_hash}, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("info", data)
+    except Exception:
+        return {}
+
+
+def report_users():
+    """Heavy-User-Analyse: Spend pro User aggregiert über alle Keys"""
+    data = get("/global/spend/keys")
+
+    if not data:
+        print("\n⚠️  Keine Key-Daten gefunden.")
+        return
+
+    # Key-Details laden um user_id zu erhalten
+    print("\n   Lade Key-Details...", end="", flush=True)
+    users = {}
+    for item in data:
+        spend = item.get("total_spend", 0) or 0
+        info = key_info(item.get("api_key", ""))
+        uid = info.get("user_id") or "—"
+        models = info.get("models") or []
+        if uid not in users:
+            users[uid] = {"spend": 0.0, "keys": 0, "models": set()}
+        users[uid]["spend"] += spend
+        users[uid]["keys"] += 1
+        for m in models:
+            users[uid]["models"].add(m)
+    print(" fertig.")
+
+    gesamt = sum(u["spend"] for u in users.values()) or 1.0
+
+    rows = []
+    for uid, info in users.items():
+        anteil = info["spend"] / gesamt * 100
+        rows.append([
+            uid,
+            f"${info['spend']:.4f}",
+            f"{anteil:.1f}%",
+            info["keys"],
+            ", ".join(sorted(info["models"])) or "—",
+        ])
+
+    rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
+
+    if TABLE_FMT == "github":
+        print("\n## 👤 Spend pro User (Heavy-User-Analyse)\n")
+    else:
+        print("\n👤 Spend pro User (Heavy-User-Analyse)")
+    print(tabulate(rows, headers=["User", "Kosten (USD)", "Anteil", "Keys", "Modelle"], tablefmt=TABLE_FMT))
+    print(f"\n   Gesamt: ${gesamt:.4f} USD  |  {len(users)} User  |  {len(data)} Keys")
+
+
 def report_teams():
     """Spend pro Team"""
     data = get("/global/spend/teams")
@@ -183,6 +243,7 @@ Beispiele:
         """
     )
     parser.add_argument("--keys",   action="store_true", help="Spend pro Virtual Key")
+    parser.add_argument("--users",  action="store_true", help="Heavy-User-Analyse")
     parser.add_argument("--teams",  action="store_true", help="Spend pro Team")
     parser.add_argument("--tags",   action="store_true", help="Spend pro Tag/Projekt")
     parser.add_argument("--daily",  action="store_true", help="Täglicher Spend")
@@ -218,6 +279,8 @@ Beispiele:
 
     if args.all or args.keys:
         report_keys()
+    if args.all or args.users:
+        report_users()
     if args.all or args.teams:
         report_teams()
     if args.all or args.tags:
@@ -225,7 +288,7 @@ Beispiele:
     if args.all or args.daily:
         report_global(args.start, args.end)
 
-    if not any([args.keys, args.teams, args.tags, args.daily, args.all]):
+    if not any([args.keys, args.users, args.teams, args.tags, args.daily, args.all]):
         parser.print_help()
 
 
