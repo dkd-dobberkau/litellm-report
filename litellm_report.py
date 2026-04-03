@@ -237,6 +237,92 @@ def fetch_teams():
     return rows
 
 
+def store_data(start_date, end_date):
+    """Holt alle Report-Daten und speichert sie als Parquet."""
+    fetch_date = datetime.now().strftime("%Y-%m-%d")
+    total_rows = 0
+
+    # Keys
+    print("   Lade Keys...", end="", flush=True)
+    keys = fetch_keys()
+    if keys:
+        _write_parquet("keys", fetch_date, keys, {
+            "fetch_date": pa.string(),
+            "key_alias": pa.string(),
+            "team_id": pa.string(),
+            "user_id": pa.string(),
+            "spend": pa.float64(),
+            "models": pa.string(),
+        })
+        total_rows += len(keys)
+        print(f" {len(keys)} Einträge")
+    else:
+        print(" keine Daten")
+
+    # Teams
+    print("   Lade Teams...", end="", flush=True)
+    teams = fetch_teams()
+    if teams:
+        _write_parquet("teams", fetch_date, teams, {
+            "fetch_date": pa.string(),
+            "team_alias": pa.string(),
+            "team_id": pa.string(),
+            "spend": pa.float64(),
+            "max_budget": pa.float64(),
+        })
+        total_rows += len(teams)
+        print(f" {len(teams)} Einträge")
+    else:
+        print(" keine Daten")
+
+    # Tags
+    print("   Lade Tags...", end="", flush=True)
+    tags = fetch_tags(start_date, end_date)
+    if tags:
+        _write_parquet("tags", fetch_date, tags, {
+            "fetch_date": pa.string(),
+            "tag_name": pa.string(),
+            "spend": pa.float64(),
+            "request_count": pa.int64(),
+        })
+        total_rows += len(tags)
+        print(f" {len(tags)} Einträge")
+    else:
+        print(" keine Daten")
+
+    # Daily
+    print("   Lade Daily...", end="", flush=True)
+    daily = fetch_daily(start_date, end_date)
+    if daily:
+        _write_parquet("daily", fetch_date, daily, {
+            "fetch_date": pa.string(),
+            "day": pa.string(),
+            "spend": pa.float64(),
+            "tokens": pa.int64(),
+        })
+        total_rows += len(daily)
+        print(f" {len(daily)} Einträge")
+    else:
+        print(" keine Daten")
+
+    print(f"\n✅ Gespeichert: {total_rows} Zeilen → {DATA_DIR}/")
+
+
+def _write_parquet(report_type, fetch_date, rows, schema_fields):
+    """Schreibt eine Liste von Dicts als Parquet-Datei."""
+    out_dir = DATA_DIR / report_type
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{fetch_date}.parquet"
+
+    for row in rows:
+        row["fetch_date"] = fetch_date
+
+    schema = pa.schema([(k, v) for k, v in schema_fields.items()])
+    arrays = {col: pa.array([r.get(col) for r in rows], type=typ) for col, typ in schema_fields.items()}
+    table = pa.table(arrays, schema=schema)
+    pq.write_table(table, out_file)
+
+
 def report_teams():
     """Spend pro Team"""
     data = fetch_teams()
@@ -284,6 +370,7 @@ Beispiele:
     parser.add_argument("--all",    action="store_true", help="Alle Reports")
     parser.add_argument("--markdown", action="store_true", help="Ausgabe als Markdown")
     parser.add_argument("--output", "-o", metavar="DATEI", help="Ausgabe in Datei schreiben")
+    parser.add_argument("--store", action="store_true", help="Daten als Parquet speichern")
     parser.add_argument("--start",  default=(datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
                         help="Startdatum (default: -30 Tage)")
     parser.add_argument("--end",    default=datetime.now().strftime("%Y-%m-%d"),
@@ -310,6 +397,12 @@ Beispiele:
     else:
         print(f"🔌 Proxy: {PROXY_URL}")
         print(f"📆 Zeitraum: {args.start} → {args.end}")
+
+    if args.store:
+        store_data(args.start, args.end)
+        if args.output:
+            sys.stdout.close()
+        return
 
     if args.all or args.keys:
         report_keys()
