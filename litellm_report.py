@@ -323,6 +323,200 @@ def _write_parquet(report_type, fetch_date, rows, schema_fields):
     pq.write_table(table, out_file)
 
 
+QUERIES = {
+    "trends": "Kosten pro Monat",
+    "top-projects": "Top 10 Projekte nach Spend",
+    "compare": "Monatsvergleich (benötigt 2 Monate: --query compare 2026-03 2026-02)",
+    "users": "Spend pro User",
+    "models": "Spend pro Credential/Modell",
+}
+
+
+def query_data(query_name, query_args):
+    """Führt eine vordefinierte Abfrage auf den Parquet-Daten aus."""
+    if not DATA_DIR.exists():
+        print("❌ Keine gespeicherten Daten gefunden. Zuerst --store ausführen.")
+        sys.exit(1)
+
+    db = duckdb.connect()
+
+    if query_name == "trends":
+        _query_trends(db)
+    elif query_name == "top-projects":
+        _query_top_projects(db)
+    elif query_name == "compare":
+        if len(query_args) < 2:
+            print("❌ compare benötigt 2 Monate: --query compare 2026-03 2026-02")
+            sys.exit(1)
+        _query_compare(db, query_args[0], query_args[1])
+    elif query_name == "users":
+        _query_users(db)
+    elif query_name == "models":
+        _query_models(db)
+    else:
+        print(f"❌ Unbekannte Abfrage: {query_name}")
+        print("\nVerfügbare Abfragen:")
+        for name, desc in QUERIES.items():
+            print(f"  {name:15s} {desc}")
+        sys.exit(1)
+
+    db.close()
+
+
+def _query_trends(db):
+    """Kosten pro Monat aus den Daily-Daten."""
+    daily_dir = DATA_DIR / "daily"
+    if not daily_dir.exists() or not list(daily_dir.glob("*.parquet")):
+        print("\n⚠️  Keine Daily-Daten gefunden.")
+        return
+    parquet_path = str(daily_dir / "*.parquet")
+    result = db.execute(f"""
+        SELECT
+            strftime(day::DATE, '%Y-%m') AS monat,
+            SUM(spend) AS kosten,
+            SUM(tokens) AS tokens
+        FROM read_parquet('{parquet_path}')
+        GROUP BY monat
+        ORDER BY monat
+    """).fetchall()
+
+    if not result:
+        print("\n⚠️  Keine Daily-Daten gefunden.")
+        return
+
+    rows = [[r[0], f"${r[1]:.4f}", f"{r[2]:,}"] for r in result]
+    print("\n📈 Kosten-Trend pro Monat")
+    print(tabulate(rows, headers=["Monat", "Kosten (USD)", "Tokens"], tablefmt=TABLE_FMT))
+
+
+def _query_top_projects(db):
+    """Top 10 Projekte nach Spend (letzter Snapshot)."""
+    tags_dir = DATA_DIR / "tags"
+    if not tags_dir.exists() or not list(tags_dir.glob("*.parquet")):
+        print("\n⚠️  Keine Projekt-Tags gefunden.")
+        return
+    parquet_path = str(tags_dir / "*.parquet")
+    result = db.execute(f"""
+        WITH latest AS (
+            SELECT MAX(fetch_date) AS fd FROM read_parquet('{parquet_path}')
+        )
+        SELECT tag_name, spend, request_count
+        FROM read_parquet('{parquet_path}'), latest
+        WHERE fetch_date = latest.fd
+          AND tag_name LIKE 'project:%'
+        ORDER BY spend DESC
+        LIMIT 10
+    """).fetchall()
+
+    if not result:
+        print("\n⚠️  Keine Projekt-Tags gefunden.")
+        return
+
+    rows = [[r[0], f"${r[1]:.4f}", r[2]] for r in result]
+    print("\n🏆 Top 10 Projekte")
+    print(tabulate(rows, headers=["Projekt", "Kosten (USD)", "Requests"], tablefmt=TABLE_FMT))
+
+
+def _query_compare(db, month_a, month_b):
+    """Vergleich zweier Monate bei Tags."""
+    tags_dir = DATA_DIR / "tags"
+    if not tags_dir.exists() or not list(tags_dir.glob("*.parquet")):
+        print(f"\n⚠️  Keine Daten für {month_a} und/oder {month_b} gefunden.")
+        return
+    parquet_path = str(tags_dir / "*.parquet")
+    result = db.execute(f"""
+        WITH a AS (
+            SELECT tag_name, spend
+            FROM read_parquet('{parquet_path}')
+            WHERE fetch_date LIKE '{month_a}%'
+            AND tag_name LIKE 'project:%'
+        ),
+        b AS (
+            SELECT tag_name, spend
+            FROM read_parquet('{parquet_path}')
+            WHERE fetch_date LIKE '{month_b}%'
+            AND tag_name LIKE 'project:%'
+        )
+        SELECT
+            COALESCE(a.tag_name, b.tag_name) AS projekt,
+            COALESCE(a.spend, 0) AS kosten_a,
+            COALESCE(b.spend, 0) AS kosten_b,
+            COALESCE(a.spend, 0) - COALESCE(b.spend, 0) AS differenz
+        FROM a FULL OUTER JOIN b ON a.tag_name = b.tag_name
+        ORDER BY COALESCE(a.spend, 0) DESC
+    """).fetchall()
+
+    if not result:
+        print(f"\n⚠️  Keine Daten für {month_a} und/oder {month_b} gefunden.")
+        return
+
+    rows = []
+    for r in result:
+        pct = (r[3] / r[2] * 100) if r[2] != 0 else 0
+        rows.append([r[0], f"${r[1]:.4f}", f"${r[2]:.4f}", f"${r[3]:+.4f}", f"{pct:+.1f}%"])
+
+    print(f"\n🔄 Vergleich {month_a} vs {month_b}")
+    print(tabulate(rows, headers=["Projekt", month_a, month_b, "Differenz", "%"], tablefmt=TABLE_FMT))
+
+
+def _query_users(db):
+    """Spend pro User über alle Snapshots."""
+    keys_dir = DATA_DIR / "keys"
+    if not keys_dir.exists() or not list(keys_dir.glob("*.parquet")):
+        print("\n⚠️  Keine User-Daten gefunden.")
+        return
+    parquet_path = str(keys_dir / "*.parquet")
+    result = db.execute(f"""
+        WITH latest AS (
+            SELECT MAX(fetch_date) AS fd FROM read_parquet('{parquet_path}')
+        )
+        SELECT
+            user_id,
+            SUM(spend) AS kosten,
+            COUNT(*) AS keys
+        FROM read_parquet('{parquet_path}'), latest
+        WHERE fetch_date = latest.fd
+          AND user_id != ''
+        GROUP BY user_id
+        ORDER BY kosten DESC
+    """).fetchall()
+
+    if not result:
+        print("\n⚠️  Keine User-Daten gefunden.")
+        return
+
+    rows = [[r[0] or "—", f"${r[1]:.4f}", r[2]] for r in result]
+    print("\n👤 Spend pro User")
+    print(tabulate(rows, headers=["User", "Kosten (USD)", "Keys"], tablefmt=TABLE_FMT))
+
+
+def _query_models(db):
+    """Spend pro Credential/Modell."""
+    tags_dir = DATA_DIR / "tags"
+    if not tags_dir.exists() or not list(tags_dir.glob("*.parquet")):
+        print("\n⚠️  Keine Credential-Tags gefunden.")
+        return
+    parquet_path = str(tags_dir / "*.parquet")
+    result = db.execute(f"""
+        WITH latest AS (
+            SELECT MAX(fetch_date) AS fd FROM read_parquet('{parquet_path}')
+        )
+        SELECT tag_name, spend, request_count
+        FROM read_parquet('{parquet_path}'), latest
+        WHERE fetch_date = latest.fd
+          AND tag_name LIKE 'Credential:%'
+        ORDER BY spend DESC
+    """).fetchall()
+
+    if not result:
+        print("\n⚠️  Keine Credential-Tags gefunden.")
+        return
+
+    rows = [[r[0], f"${r[1]:.4f}", r[2]] for r in result]
+    print("\n🤖 Spend pro Modell/Credential")
+    print(tabulate(rows, headers=["Credential", "Kosten (USD)", "Requests"], tablefmt=TABLE_FMT))
+
+
 def report_teams():
     """Spend pro Team"""
     data = fetch_teams()
@@ -360,6 +554,14 @@ Beispiele:
   python litellm_report.py --all
   python litellm_report.py --keys --teams
   python litellm_report.py --tags --start 2026-03-01 --end 2026-03-20
+
+Speichern & Abfragen:
+  python litellm_report.py --store
+  python litellm_report.py --query trends
+  python litellm_report.py --query top-projects
+  python litellm_report.py --query compare 2026-03 2026-02
+  python litellm_report.py --query users
+  python litellm_report.py --query models
         """
     )
     parser.add_argument("--keys",   action="store_true", help="Spend pro Virtual Key")
@@ -371,6 +573,8 @@ Beispiele:
     parser.add_argument("--markdown", action="store_true", help="Ausgabe als Markdown")
     parser.add_argument("--output", "-o", metavar="DATEI", help="Ausgabe in Datei schreiben")
     parser.add_argument("--store", action="store_true", help="Daten als Parquet speichern")
+    parser.add_argument("--query", nargs="+", metavar="ABFRAGE",
+                        help="Gespeicherte Daten abfragen (trends|top-projects|compare|users|models)")
     parser.add_argument("--start",  default=(datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
                         help="Startdatum (default: -30 Tage)")
     parser.add_argument("--end",    default=datetime.now().strftime("%Y-%m-%d"),
@@ -397,6 +601,12 @@ Beispiele:
     else:
         print(f"🔌 Proxy: {PROXY_URL}")
         print(f"📆 Zeitraum: {args.start} → {args.end}")
+
+    if args.query:
+        query_data(args.query[0], args.query[1:])
+        if args.output:
+            sys.stdout.close()
+        return
 
     if args.store:
         store_data(args.start, args.end)
