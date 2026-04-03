@@ -8,19 +8,27 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 try:
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
     import requests
+    from dotenv import load_dotenv
     from tabulate import tabulate
 except ImportError:
-    print("Bitte installieren: pip install requests tabulate")
+    print("Bitte installieren: uv pip install requests tabulate python-dotenv duckdb pyarrow")
     sys.exit(1)
+
+load_dotenv()
 
 
 # ── Konfiguration ──────────────────────────────────────────────────────────────
 PROXY_URL = os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")
 MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 TABLE_FMT = "rounded_outline"
+DATA_DIR = Path(__file__).parent / "data" / "parquet"
 
 
 def headers():
