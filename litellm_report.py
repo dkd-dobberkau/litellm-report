@@ -589,6 +589,13 @@ Speichern & Abfragen:
     if args.output:
         sys.stdout = open(args.output, "w", encoding="utf-8")
 
+    # --query braucht keinen API-Zugang, nur lokale Parquet-Daten
+    if args.query:
+        query_data(args.query[0], args.query[1:])
+        if args.output:
+            sys.stdout.close()
+        return
+
     if not MASTER_KEY:
         print("❌ LITELLM_MASTER_KEY nicht gesetzt.")
         print("   export LITELLM_MASTER_KEY=sk-...")
@@ -601,12 +608,6 @@ Speichern & Abfragen:
     else:
         print(f"🔌 Proxy: {PROXY_URL}")
         print(f"📆 Zeitraum: {args.start} → {args.end}")
-
-    if args.query:
-        query_data(args.query[0], args.query[1:])
-        if args.output:
-            sys.stdout.close()
-        return
 
     if args.store:
         store_data(args.start, args.end)
@@ -625,7 +626,7 @@ Speichern & Abfragen:
     if args.all or args.daily:
         report_global(args.start, args.end)
 
-    if not any([args.keys, args.users, args.teams, args.tags, args.daily, args.all]):
+    if not any([args.keys, args.users, args.teams, args.tags, args.daily, args.all, args.store, args.query]):
         parser.print_help()
 
 
