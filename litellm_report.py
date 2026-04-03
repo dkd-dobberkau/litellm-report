@@ -58,21 +58,30 @@ def get(path, params=None):
 
 
 # ── Report-Funktionen ──────────────────────────────────────────────────────────
-def report_keys():
-    """Spend pro Virtual Key"""
+def fetch_keys():
+    """Holt Key-Daten und gibt normalisierte Dicts zurück."""
     data = get("/global/spend/keys")
-
+    if not data:
+        return []
     rows = []
     for item in data:
         info = key_info(item.get("api_key", ""))
-        rows.append([
-            item.get("key_alias") or item.get("api_key", "")[:12] + "...",
-            info.get("team_id", "—"),
-            info.get("user_id", "—"),
-            f"${item.get('total_spend', item.get('total_cost', 0)):.4f}",
-            info.get("models", []),
-        ])
+        models = info.get("models") or []
+        rows.append({
+            "key_alias": item.get("key_alias") or item.get("api_key", "")[:12] + "...",
+            "team_id": info.get("team_id", ""),
+            "user_id": info.get("user_id", ""),
+            "spend": float(item.get("total_spend", item.get("total_cost", 0)) or 0),
+            "models": ", ".join(models) if models else "",
+        })
+    return rows
 
+
+def report_keys():
+    """Spend pro Virtual Key"""
+    data = fetch_keys()
+    rows = [[r["key_alias"], r["team_id"] or "—", r["user_id"] or "—",
+             f"${r['spend']:.4f}", r["models"]] for r in data]
     rows.sort(key=lambda x: float(x[3].replace("$", "")), reverse=True)
 
     if TABLE_FMT == "github":
@@ -82,29 +91,32 @@ def report_keys():
     print(tabulate(rows, headers=["Key / Alias", "Team", "User", "Kosten (USD)", "Modelle"], tablefmt=TABLE_FMT))
 
 
+def fetch_tags(start_date, end_date):
+    """Holt Tag-Daten und gibt normalisierte Dicts zurück."""
+    data = get("/global/spend/tags", params={"start_date": start_date, "end_date": end_date})
+    if not data:
+        return []
+    tag_list = data.get("spend_per_tag", []) if isinstance(data, dict) else data
+    if not tag_list:
+        return []
+    rows = []
+    for item in tag_list:
+        rows.append({
+            "tag_name": item.get("name", item.get("individual_request_tag", "")),
+            "spend": float(item.get("spend", item.get("total_spend", 0)) or 0),
+            "request_count": int(item.get("log_count", 0) or 0),
+        })
+    return rows
+
+
 def report_tags(start_date, end_date):
     """Spend pro Tag / Projekt"""
-    data = get("/global/spend/tags", params={"start_date": start_date, "end_date": end_date})
-
+    data = fetch_tags(start_date, end_date)
     if not data:
         print("\n⚠️  Keine Tag-Daten gefunden. Tags in Requests noch nicht gesetzt?")
         return
 
-    # API returns a dict with "spend_per_tag" list
-    tag_list = data.get("spend_per_tag", []) if isinstance(data, dict) else data
-
-    if not tag_list:
-        print("\n⚠️  Keine Tag-Daten gefunden. Tags in Requests noch nicht gesetzt?")
-        return
-
-    rows = []
-    for item in tag_list:
-        rows.append([
-            item.get("name", item.get("individual_request_tag", "—")),
-            f"${item.get('spend', item.get('total_spend', 0)):.4f}",
-            item.get("log_count", "—"),
-        ])
-
+    rows = [[r["tag_name"], f"${r['spend']:.4f}", r["request_count"]] for r in data]
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
     if TABLE_FMT == "github":
@@ -114,26 +126,30 @@ def report_tags(start_date, end_date):
     print(tabulate(rows, headers=["Tag", "Kosten (USD)", "Requests"], tablefmt=TABLE_FMT))
 
 
+def fetch_daily(start_date, end_date):
+    """Holt tägliche Spend-Daten und gibt normalisierte Dicts zurück."""
+    data = get("/global/spend/report", params={"start_date": start_date, "end_date": end_date})
+    if not data:
+        return []
+    rows = []
+    for item in data:
+        rows.append({
+            "day": item.get("group_by_day", item.get("date", "")),
+            "spend": float(item.get("total_cost", 0) or 0),
+            "tokens": int(item.get("total_tokens", 0) or 0),
+        })
+    return rows
+
+
 def report_global(start_date, end_date):
     """Gesamtreport nach Datum"""
-    data = get("/global/spend/report", params={"start_date": start_date, "end_date": end_date})
-
-    if data is None:
-        return
+    data = fetch_daily(start_date, end_date)
     if not data:
         print("\n⚠️  Keine Daten für den Zeitraum gefunden.")
         return
 
-    rows = []
-    total = 0.0
-    for item in data:
-        cost = item.get("total_cost", 0)
-        total += cost
-        rows.append([
-            item.get("group_by_day", item.get("date", "—")),
-            f"${cost:.4f}",
-            item.get("total_tokens", "—"),
-        ])
+    rows = [[r["day"], f"${r['spend']:.4f}", r["tokens"] or "—"] for r in data]
+    total = sum(r["spend"] for r in data)
 
     if TABLE_FMT == "github":
         print(f"\n## 📅 Täglicher Spend ({start_date} → {end_date})\n")
@@ -202,29 +218,39 @@ def report_users():
     print(f"\n   Gesamt: ${gesamt:.4f} USD  |  {len(users)} User  |  {len(data)} Keys")
 
 
+def fetch_teams():
+    """Holt Team-Daten und gibt normalisierte Dicts zurück."""
+    data = get("/global/spend/teams")
+    if not data:
+        return []
+    team_list = data.get("total_spend_per_team", []) if isinstance(data, dict) else data
+    if not team_list:
+        return []
+    rows = []
+    for item in team_list:
+        rows.append({
+            "team_alias": item.get("team_alias") or "",
+            "team_id": item.get("team_id", ""),
+            "spend": float(item.get("total_spend", item.get("spend", 0)) or 0),
+            "max_budget": float(item.get("max_budget", 0) or 0),
+        })
+    return rows
+
+
 def report_teams():
     """Spend pro Team"""
-    data = get("/global/spend/teams")
-
+    data = fetch_teams()
     if not data:
         print("\n⚠️  Keine Team-Daten gefunden. Teams noch nicht angelegt?")
         return
 
-    # API returns a dict with "total_spend_per_team" list
-    team_list = data.get("total_spend_per_team", []) if isinstance(data, dict) else data
-
-    if not team_list:
-        print("\n⚠️  Keine Team-Daten gefunden. Teams noch nicht angelegt?")
-        return
-
     rows = []
-    for item in team_list:
+    for r in data:
         rows.append([
-            item.get("team_alias") or item.get("team_id", "—"),
-            f"${item.get('total_spend', item.get('spend', 0)):.4f}",
-            f"${item.get('max_budget', 0) or 0:.2f}" if item.get("max_budget") else "—",
+            r["team_alias"] or r["team_id"] or "—",
+            f"${r['spend']:.4f}",
+            f"${r['max_budget']:.2f}" if r["max_budget"] else "—",
         ])
-
     rows.sort(key=lambda x: float(x[1].replace("$", "")), reverse=True)
 
     if TABLE_FMT == "github":
