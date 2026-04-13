@@ -1,0 +1,9 @@
+services:
+  budget-alert:
+    build: .
+    container_name: litellm-budget-alert
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/var/log
+    restart: unless-stopped
