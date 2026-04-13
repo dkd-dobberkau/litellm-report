@@ -53,19 +53,19 @@ ALERT_THRESHOLDS = [80, 90, 100]
 MONTHLY_BUDGETS = {
     # Power-User ($500)
     "dkdrkaehm":            500.0,
-    "dkdjammann":           500.0,
+    "dkdehenrich":          500.0,
     "dkdndehl":             500.0,
     # Regular ($200)
+    "dkdjammann":           200.0,
     "dkdnreuschling":       200.0,
-    "dkdehenrich":          200.0,
-    "dkdakolos":            200.0,
-    "dkdjheymann":          200.0,
-    "dkdczabanski":         200.0,
-    "dkdmlubenka":          200.0,
     "dkdtjanke":            200.0,
     "dkdmfriedrich":        200.0,
-    "dkdoseiffermann":      200.0,
     # Light ($50)
+    "dkdakolos":             50.0,
+    "dkdjheymann":           50.0,
+    "dkdczabanski":          50.0,
+    "dkdmlubenka":           50.0,
+    "dkdoseiffermann":       50.0,
     "dkdtwebler":            50.0,
     "dkdahildebrand":        50.0,
     "dkdgduman":             50.0,
@@ -80,8 +80,8 @@ MONTHLY_BUDGETS = {
     "dkdmgoldbach":          50.0,
     "dkdcsahner":            50.0,
     # Service-Keys
-    "chat.dkd.de Developer Accounts": 300.0,
-    "chat.dkd.de Management":         300.0,
+    "chat.dkd.de Developer Accounts": 500.0,
+    "chat.dkd.de Management":         150.0,
     "qodo":                            50.0,
     "hosted-solr-node-14":             50.0,
     "Demo Instance User Key":          50.0,
