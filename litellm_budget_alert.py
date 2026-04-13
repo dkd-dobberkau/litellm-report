@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 LiteLLM Budget-Alert (Monatsbasis)
-Prüft Budget-Auslastung pro Kalendermonat und sendet E-Mail-Warnungen.
+Prüft Budget-Auslastung pro Kalendermonat und sendet E-Mail-Warnungen
+über Microsoft Graph API.
 
 Verwendung:
   python litellm_budget_alert.py              # Aktueller Monat, Alerts senden
@@ -12,21 +13,17 @@ Verwendung:
 Umgebungsvariablen (.env):
   LITELLM_PROXY_URL    URL des Proxys
   LITELLM_MASTER_KEY   Master Key
-  SMTP_HOST            SMTP-Server (z.B. smtp.dkd.de)
-  SMTP_PORT            SMTP-Port (default: 587)
-  SMTP_USER            SMTP-Benutzername
-  SMTP_PASSWORD        SMTP-Passwort
-  SMTP_FROM            Absender-Adresse (z.B. litellm@dkd.de)
+  AZURE_TENANT_ID      Azure AD Tenant ID
+  AZURE_CLIENT_ID      Azure App Registration Client ID
+  AZURE_CLIENT_SECRET  Azure App Registration Client Secret
+  MAIL_FROM            Absender-Adresse (z.B. litellm@dkd.de)
 """
 
 import argparse
 import calendar
 import os
-import smtplib
 import sys
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 try:
     import requests
@@ -40,11 +37,10 @@ load_dotenv()
 PROXY_URL = os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")
 MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("SMTP_FROM", "litellm@dkd.de")
+AZURE_TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
+AZURE_CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", "litellm@dkd.de")
 
 # Schwellenwerte in Prozent — bei jedem wird eine E-Mail gesendet
 ALERT_THRESHOLDS = [80, 90, 100]
@@ -195,30 +191,63 @@ Proxy: {PROXY_URL}
     return subject, body
 
 
+def get_graph_token():
+    """Holt ein Access-Token über OAuth2 Client Credentials Flow."""
+    r = requests.post(
+        f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/token",
+        data={
+            "client_id": AZURE_CLIENT_ID,
+            "client_secret": AZURE_CLIENT_SECRET,
+            "scope": "https://graph.microsoft.com/.default",
+            "grant_type": "client_credentials",
+        },
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
 def send_email(to_addr, subject, body, dry_run=False):
-    """Sendet eine E-Mail über SMTP."""
+    """Sendet eine E-Mail über Microsoft Graph API."""
     if dry_run:
         print(f"    [DRY-RUN] E-Mail an {to_addr}: {subject}")
         return True
 
-    if not all([SMTP_HOST, SMTP_FROM]):
-        print(f"    ⚠️  SMTP nicht konfiguriert — E-Mail an {to_addr} übersprungen")
+    if not all([AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET]):
+        print(f"    ⚠️  Azure nicht konfiguriert — E-Mail an {to_addr} übersprungen")
         return False
 
-    msg = MIMEMultipart()
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_addr
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            if SMTP_USER and SMTP_PASSWORD:
-                server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        token = get_graph_token()
+        r = requests.post(
+            f"https://graph.microsoft.com/v1.0/users/{MAIL_FROM}/sendMail",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "message": {
+                    "subject": subject,
+                    "body": {"contentType": "Text", "content": body},
+                    "toRecipients": [
+                        {"emailAddress": {"address": to_addr}}
+                    ],
+                },
+                "saveToSentItems": False,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
         print(f"    ✓ E-Mail an {to_addr} gesendet")
         return True
+    except requests.exceptions.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("error", {}).get("message", "")
+        except Exception:
+            detail = str(e)
+        print(f"    ✗ E-Mail an {to_addr} fehlgeschlagen: {detail}")
+        return False
     except Exception as e:
         print(f"    ✗ E-Mail an {to_addr} fehlgeschlagen: {e}")
         return False
