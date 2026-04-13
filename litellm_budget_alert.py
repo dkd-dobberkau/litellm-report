@@ -42,8 +42,9 @@ AZURE_CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "litellm@dkd.de")
 
-# Schwellenwerte in Prozent — bei jedem wird eine E-Mail gesendet
-ALERT_THRESHOLDS = [80, 90, 100]
+# Prognose-Schwellenwerte (Hochrechnung aufs Monatsende)
+# Alert wird gesendet wenn die Prognose einen dieser Werte erreicht
+FORECAST_THRESHOLDS = [100, 120]
 
 # Monats-Budget pro Key (USD) — Keys ohne Eintrag werden ignoriert
 MONTHLY_BUDGETS = {
@@ -119,9 +120,23 @@ def get_monthly_spend(api_key_hash, start_date, end_date):
     return total
 
 
+def month_progress(year, month):
+    """Anteil des Monats der bereits vergangen ist (0.0–1.0)."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    today = datetime.now()
+    if today.year == year and today.month == month:
+        elapsed = min(today.day, days_in_month)
+    elif (today.year, today.month) > (year, month):
+        elapsed = days_in_month
+    else:
+        elapsed = 0
+    return elapsed / days_in_month if days_in_month > 0 else 1.0
+
+
 def get_keys_with_monthly_budget(year, month):
-    """Lädt alle Keys mit Monatsbudget und berechnet den Monats-Spend."""
+    """Lädt alle Keys mit Monatsbudget und berechnet Spend + Prognose."""
     start_date, end_date = month_range(year, month)
+    progress = month_progress(year, month)
 
     r = requests.get(f"{PROXY_URL}/global/spend/keys", headers=headers(), timeout=10)
     r.raise_for_status()
@@ -150,43 +165,80 @@ def get_keys_with_monthly_budget(year, month):
 
         # Monats-Spend berechnen
         spend = get_monthly_spend(api_key_hash, start_date, end_date)
+        percent = spend / budget * 100 if budget > 0 else 0
+        forecast = percent / progress if progress > 0 else percent
 
         results.append({
             "alias": alias,
             "user_id": user_id or "",
             "spend": spend,
             "max_budget": budget,
-            "percent": spend / budget * 100 if budget > 0 else 0,
+            "percent": percent,
+            "progress": progress,
+            "forecast": forecast,
         })
 
     return results
 
 
 def build_email(key_info, monat_label):
-    """Erstellt die Alert-E-Mail."""
+    """Erstellt die Alert-E-Mail mit prognosebasiertem Hinweis."""
     alias = key_info["alias"]
     user = key_info["user_id"]
     spend = key_info["spend"]
     budget = key_info["max_budget"]
     percent = key_info["percent"]
-
-    subject = f"LiteLLM Budget-Warnung {monat_label}: {alias} bei {percent:.0f}%"
+    forecast = key_info["forecast"]
+    progress = key_info["progress"]
+    day_pct = progress * 100
 
     name = user.split("@")[0].replace(".", " ").title() if user and "@" in user else alias
 
-    body = f"""Hallo {name},
+    if percent >= 100:
+        subject = f"LiteLLM {monat_label}: {alias} — Budget aufgebraucht ({percent:.0f}%)"
+        hinweis = (
+            "Dein Budget für diesen Monat ist aufgebraucht. "
+            "Falls du weiterhin Zugriff benötigst, melde dich kurz — "
+            "wir finden eine Lösung."
+        )
+    elif forecast >= 120:
+        subject = f"LiteLLM {monat_label}: {alias} — Prognose {forecast:.0f}%"
+        hinweis = (
+            f"Bei {day_pct:.0f}% des Monats bist du schon bei {percent:.0f}% deines Budgets. "
+            f"Wenn es so weitergeht, landest du bei ca. {forecast:.0f}% zum Monatsende. "
+            "Vielleicht lohnt es sich, den Verbrauch im Auge zu behalten."
+        )
+    elif forecast >= 100:
+        subject = f"LiteLLM {monat_label}: {alias} — Prognose {forecast:.0f}%"
+        hinweis = (
+            f"Du bist bei {percent:.0f}% deines Budgets ({day_pct:.0f}% des Monats vergangen) — "
+            f"die Hochrechnung liegt bei ca. {forecast:.0f}% zum Monatsende. "
+            "Kein Stress, nur ein kurzer Hinweis, damit es keine Überraschungen gibt."
+        )
+    else:
+        subject = f"LiteLLM {monat_label}: {alias} — {percent:.0f}% verbraucht"
+        hinweis = (
+            f"Alles im grünen Bereich — bei {day_pct:.0f}% des Monats liegst du "
+            f"bei {percent:.0f}% deines Budgets (Prognose: {forecast:.0f}%)."
+        )
 
-dein LiteLLM API-Key "{alias}" hat im {monat_label} {percent:.0f}% des Monatsbudgets erreicht.
+    body = f"""Hi {name},
 
-  Verbrauch {monat_label}:  ${spend:,.2f} USD
-  Monatsbudget:             ${budget:,.2f} USD
-  Auslastung:               {percent:.1f}%
+hier ein kurzer Überblick zu deinem LiteLLM-Key "{alias}" im {monat_label}:
 
-{"⚠️  Das Monatsbudget ist aufgebraucht! Weitere Requests werden bis zum Monatswechsel abgelehnt." if percent >= 100 else "Bitte achte auf deinen Verbrauch, um eine Unterbrechung zu vermeiden."}
+  Verbrauch:      ${spend:,.2f} USD
+  Budget:         ${budget:,.2f} USD
+  Auslastung:     {percent:.1f}%
+  Monatsfortschritt: {day_pct:.0f}%
+  Prognose:       {forecast:.0f}% zum Monatsende
+
+{hinweis}
+
+Viele Grüße
+LiteLLM Budget-Monitor
 
 ---
-Diese Nachricht wurde automatisch vom LiteLLM Budget-Alert gesendet.
-Proxy: {PROXY_URL}
+Automatisch generiert · {PROXY_URL}
 """
     return subject, body
 
@@ -285,36 +337,35 @@ def main():
         return
 
     alerts_sent = 0
-    for key in sorted(keys, key=lambda k: k["percent"], reverse=True):
+    for key in sorted(keys, key=lambda k: k["forecast"], reverse=True):
+        forecast = key["forecast"]
         percent = key["percent"]
         alias = key["alias"] or "unbekannt"
         user = key["user_id"]
 
-        if percent < args.threshold:
+        if forecast < args.threshold:
             continue
 
-        # Status-Anzeige
+        # Status basierend auf Prognose
         if percent >= 100:
             status = "🔴"
-        elif percent >= 90:
+        elif forecast >= 120:
             status = "🟠"
-        elif percent >= 80:
+        elif forecast >= 100:
             status = "🟡"
         else:
             status = "🟢"
 
-        print(f"  {status} {alias:30s} ${key['spend']:>10,.2f} / ${key['max_budget']:>10,.2f}  ({percent:.1f}%)")
+        print(f"  {status} {alias:30s} ${key['spend']:>10,.2f} / ${key['max_budget']:>10,.2f}  ({percent:.1f}% → Prognose {forecast:.0f}%)")
 
-        # E-Mail senden wenn Schwellenwert erreicht
-        for threshold in sorted(ALERT_THRESHOLDS, reverse=True):
-            if percent >= threshold:
-                to_addr = user if user and "@" in user else ""
-                if not to_addr:
-                    break
+        # E-Mail senden wenn Prognose-Schwellenwert erreicht oder Budget überschritten
+        should_alert = percent >= 100 or any(forecast >= t for t in FORECAST_THRESHOLDS)
+        if should_alert:
+            to_addr = user if user and "@" in user else ""
+            if to_addr:
                 subject, body = build_email(key, monat_label)
                 if send_email(to_addr, subject, body, dry_run=args.dry_run):
                     alerts_sent += 1
-                break
 
     print(f"\n   {len(keys)} Keys geprüft für {monat_label}, {alerts_sent} Alerts gesendet")
 
