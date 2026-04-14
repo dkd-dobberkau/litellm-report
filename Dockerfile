@@ -15,9 +15,9 @@ COPY litellm_budget_alert.py .
 ENV PATH=/root/.local/bin:/home/appuser/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 
-# Cron-Job: täglich um 8:00 Uhr Budget-Alerts prüfen
+# Cron-Job: täglich um 12:30 Uhr Budget-Alerts prüfen
 # Env-Vars werden zur Laufzeit aus /app/.env.cron injiziert
-RUN echo '0 8 * * * root . /app/.env.cron && /home/appuser/.local/bin/python /app/litellm_budget_alert.py >> /var/log/budget-alert.log 2>&1' > /etc/cron.d/budget-alert \
+RUN echo '30 12 * * * root . /app/.env.cron && /home/appuser/.local/bin/python /app/litellm_budget_alert.py >> /var/log/budget-alert.log 2>&1' > /etc/cron.d/budget-alert \
     && chmod 0644 /etc/cron.d/budget-alert
 
 COPY entrypoint.sh .

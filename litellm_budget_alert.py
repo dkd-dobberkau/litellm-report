@@ -285,7 +285,7 @@ def send_email(to_addr, subject, body, dry_run=False):
                         {"emailAddress": {"address": to_addr}}
                     ],
                 },
-                "saveToSentItems": False,
+                "saveToSentItems": True,
             },
             timeout=10,
         )
