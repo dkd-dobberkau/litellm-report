@@ -10,7 +10,7 @@ Kommandozeilen-Tools zum Abrufen von Kostendaten, Verwalten von Budgets und Moni
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install requests tabulate python-dotenv
+uv pip install requests tabulate python-dotenv duckdb pyarrow
 ```
 
 ## Konfiguration
@@ -21,12 +21,11 @@ Umgebungsvariablen in `.env` oder als Export:
 LITELLM_PROXY_URL=https://dein-proxy-host   # default: http://localhost:4000
 LITELLM_MASTER_KEY=sk-...
 
-# Optional für Budget-Alerts per E-Mail
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=litellm@example.com
-SMTP_PASSWORD=...
-SMTP_FROM=litellm@example.com
+# Optional für Budget-Alerts per E-Mail (Microsoft Graph API)
+AZURE_TENANT_ID=...
+AZURE_CLIENT_ID=...
+AZURE_CLIENT_SECRET=...
+MAIL_FROM=litellm@example.com
 ```
 
 ## Scripts
@@ -37,6 +36,7 @@ SMTP_FROM=litellm@example.com
 python litellm_report.py [--keys] [--users] [--teams] [--tags] [--daily] [--all]
                          [--start YYYY-MM-DD] [--end YYYY-MM-DD]
                          [--markdown] [--output DATEI]
+                         [--store] [--query ABFRAGE ...]
 ```
 
 | Flag | Beschreibung |
@@ -51,12 +51,27 @@ python litellm_report.py [--keys] [--users] [--teams] [--tags] [--daily] [--all]
 | `--end` | Enddatum (default: heute) |
 | `--markdown` | Ausgabe als Markdown-Tabellen |
 | `--output` / `-o` | Ausgabe in Datei schreiben (`.md` → automatisch Markdown) |
+| `--store` | Daten als Parquet-Dateien lokal speichern (`data/parquet/`) |
+| `--query` | Gespeicherte Parquet-Daten abfragen (ohne API-Zugang) |
+
+**Live-Reports (API):**
 
 ```bash
 python litellm_report.py --all
 python litellm_report.py --users
 python litellm_report.py --tags --start 2026-03-01 --end 2026-03-31
 python litellm_report.py --all -o report.md
+```
+
+**Daten speichern & offline abfragen (DuckDB):**
+
+```bash
+python litellm_report.py --store                          # Snapshot als Parquet speichern
+python litellm_report.py --query trends                   # Kosten pro Monat
+python litellm_report.py --query top-projects             # Top 10 Projekte nach Spend
+python litellm_report.py --query compare 2026-03 2026-02  # Monatsvergleich
+python litellm_report.py --query users                    # Spend pro User
+python litellm_report.py --query models                   # Spend pro Credential/Modell
 ```
 
 ### litellm_budget.py — Budget-Konfiguration
@@ -85,7 +100,7 @@ Die Zuordnung wird über `USER_MAP` im Script konfiguriert (key_alias → E-Mail
 
 ### litellm_budget_alert.py — Budget-Monitoring
 
-Prüft die Budget-Auslastung pro Kalendermonat und sendet E-Mail-Warnungen bei Schwellenwerten (80%, 90%, 100%).
+Prüft die Budget-Auslastung pro Kalendermonat und sendet E-Mail-Warnungen bei Schwellenwerten (80%, 90%, 100%) über die Microsoft Graph API.
 
 ```bash
 python litellm_budget_alert.py --dry-run              # Preview, keine E-Mails
@@ -104,7 +119,18 @@ Setzt den Spend aller Keys mit Budget auf $0 zurück. Gedacht für einen monatli
 python litellm_reset_spend.py            # Alle Keys zurücksetzen
 ```
 
-### Cronjobs (optional)
+### Docker-Setup (Budget-Alerts)
+
+Der Budget-Alert kann als Docker-Container mit integriertem Cronjob laufen:
+
+```bash
+docker compose up --build -d     # Container starten (Cron: täglich 08:00)
+docker compose logs -f           # Logs verfolgen
+```
+
+Die Konfiguration erfolgt über die `.env`-Datei (Proxy-URL, Master Key, Azure-Credentials).
+
+### Cronjobs (alternativ ohne Docker)
 
 ```cron
 # Budget-Alert täglich um 8:00
